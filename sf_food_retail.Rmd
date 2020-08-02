@@ -5,7 +5,7 @@ output:
     df_print: paged
     theme: null
     css: style.css
-    keep_md: yes
+    keep_md: true
 ---
 
 A good friend of mine is in the public health sector focusing on food and nutrition policy, specifically focusing on access and equity for farmer's markets.  I've learned a lot from her around the patterns and trends associated with farmer's markets in California.  There's a normative aspect to her work: a belief that localizing supply chains and connecting farmers directly with consumers is going to be a key go forward strategy for both environmentalism _and_ food access. One of her research programs right now is focused on understanding the barriers discouraging Black communities from patronizing these markets to the same levels that other communities in California do.  There's the obvious factor of price; yet it doesn't fully explain the consumption patterns as there are definitely lower price point markets that working class immigrant enclaves heavily rely on.  In addition to price then, maybe there's a secondary factor of proximity.  Regardless, it seems like wrapped up in this is just larger questions around food access for poor Black communities in America, a topic that I'm not even close to understanding enough to be able to have a proper discussion about.  
@@ -23,6 +23,8 @@ library(httr)
 library(jsonlite)
 library(readr)
 library(purrr)
+library(RColorBrewer)
+library(scales)
 
 # https://data.sfgov.org/Economy-and-Community/Registered-Business-Locations-San-Francisco/g8m3-pdis
 ```
@@ -76,8 +78,19 @@ rm(location_df)
 business_df %>% saveRDS("sf_business_data.rds")
 ```
 
+Some data cleaning (timestamps mostly)...
 ```{r}
 business_df <- readRDS("sf_business_data.rds")
+
+# for timestamps, remove the T and everything after the '.' inclusive
+business_df <- business_df %>%
+  mutate(
+    dba_start_date = as.POSIXct(gsub("\\..*$", "", gsub("T", " ", dba_start_date))),
+    location_start_date = as.POSIXct(gsub("\\..*$", "", gsub("T", " ", location_start_date))),
+    location_end_date = as.POSIXct(gsub("\\..*$", "", gsub("T", " ", location_end_date))),
+    dba_end_date = as.POSIXct(gsub("\\..*$", "", gsub("T", " ", dba_end_date))),
+    supervisor_district = as.integer(supervisor_district)
+  )
 ```
 
 Really basic `Get to Know Your Data`. Looks like Food Services and Retail Trade are the NAIC codes we want for groceries.  There's a _lot_ of business without a code; I did some quick checks and I don't think there are any groceries in there, mostly apartments and things like that.  One thing to note is that multiple businesses can be registered at the same address.  For example, there's a market in Laurel Heights that's one record, but inside that market is a butcher store, coffee shop, cheese shop, etc. that all registered as separate businesses within same address.  The "primary" market has a `Food Services` NAIC code, but all the secondary businesses have an `NA` code.
@@ -112,6 +125,16 @@ business_df %>%
 # "Food Services", "Retail Trade"
 ```
 
+According the description of the dataset on the SF Gov site, the NIC code is from a federal standard called the North American Industry Classification System. When businesses register with the city, a subset of these codes are needed for tax purposes. It's not super clear what the Lic code is; seems like it stands for "business license code", and is definitely a much more detailed specification.
+```{r}
+business_df %>%
+  filter(
+    naic_code_description %in% c("Food Services", "Retail Trade")
+  ) %>%
+  group_by(lic_code_description) %>%
+  count(sort = TRUE)
+```
+
 Mostly SF based businesses, no surprise.
 ```{r}
 business_df %>%
@@ -120,5 +143,35 @@ business_df %>%
   ) %>%
   group_by(city) %>%
   count(sort = TRUE)
+```
+
+Pretty fascinating...some very old businesses here!
+```{r}
+business_df %>%
+  filter(dba_start_date < '1950-01-01') %>%
+  mutate(
+    dba_name = substr(dba_name, 1, 40)
+  ) %>%
+  select(dba_name, dba_start_date, dba_end_date, naic_code_description, lic_code_description)
+```
+
+The pandemic has definitely hurt the number of new food/retail businesses being created :(
+```{r}
+business_df %>% 
+  filter(
+    !is.na(location_start_date),
+    naic_code_description %in% c("Retail Trade", "Food Services") 
+  ) %>%
+  group_by(
+    business_registered_month = as.Date(floor_date(location_start_date, 'year')),
+    naic_code_description
+  ) %>%
+  summarise(
+    count = n()
+  ) %>%
+  ggplot(aes(x = business_registered_month, y = count, colour = naic_code_description)) + geom_line() + theme_bw() +
+  scale_x_date(name = "Business Registration Month", date_breaks = "8 years", date_label = "%Y") +
+  scale_colour_brewer(name = "NAIC code description", palette = "Dark2") +
+  scale_y_continuous(breaks = seq(0, 2000, 250))
 ```
 
